@@ -1,3 +1,5 @@
+# { "Depends": "genlayer:1.0.0" }
+
 from genlayer import *
 import typing
 import json
