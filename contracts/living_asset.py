@@ -1,16 +1,11 @@
-# { "Runner": "python-genlayer" }
-# { "Depends": "genlayer:1.0.0" }
+# { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
 
 from genlayer import *
 import typing
-import json
 
 
-class LivingAssetV1(gl.Contract):
-    """
-    Phase 1: Multi-Source Verification System
-    """
-    
+class LivingAssetV2(gl.Contract):
+
     asset_name: str
     asset_type: str
     owner: str
@@ -21,8 +16,7 @@ class LivingAssetV1(gl.Contract):
     assists: u32
     verified_events: u32
     rejected_events: u32
-    allowed_domains: list[str]
-    
+
     def __init__(
         self,
         asset_name: str,
@@ -32,21 +26,15 @@ class LivingAssetV1(gl.Contract):
         self.asset_name = asset_name
         self.asset_type = asset_type
         self.owner = owner
-        self.power = 70
-        self.level = 1
-        self.experience = 0
-        self.goals = 0
-        self.assists = 0
-        self.verified_events = 0
-        self.rejected_events = 0
-        self.allowed_domains = [
-            "espn.com",
-            "bbc.com",
-            "goal.com",
-            "fifa.com",
-            "uefa.com"
-        ]
-    
+
+        self.power = u32(70)
+        self.level = u32(1)
+        self.experience = u32(0)
+        self.goals = u32(0)
+        self.assists = u32(0)
+        self.verified_events = u32(0)
+        self.rejected_events = u32(0)
+
     @gl.public.view
     def get_asset(self) -> dict:
         return {
@@ -56,9 +44,11 @@ class LivingAssetV1(gl.Contract):
             "level": self.level,
             "experience": self.experience,
             "goals": self.goals,
-            "assists": self.assists
+            "assists": self.assists,
+            "verified_events": self.verified_events,
+            "rejected_events": self.rejected_events
         }
-    
+
     @gl.public.write
     def verify_event(
         self,
@@ -66,46 +56,127 @@ class LivingAssetV1(gl.Contract):
         claimed_value: u32,
         source_urls: list[str]
     ) -> dict:
+
         if len(source_urls) < 2:
-            return {"status": "ERROR", "message": "Need 2+ sources"}
-        
-        def check_sources() -> str:
-            results = []
-            for url in source_urls[:3]:
+            return {
+                "status": "ERROR",
+                "message": "At least 2 sources are required"
+            }
+
+        # Copy storage values BEFORE entering nondeterministic code
+        asset_name = self.asset_name
+
+        url1 = source_urls[0]
+        url2 = source_urls[1]
+
+        def verify_sources() -> str:
+
+            verified_count = 0
+
+            for url in [url1, url2]:
+
                 try:
-                    response = gl.nondet.web.get(url, timeout=5000)
-                    page = response.body.decode("utf-8", errors="ignore")[:2000]
-                    
-                    prompt = f"Verify: {self.asset_name} {event_type}={claimed_value}. Content: {page[:500]}. Reply: VERIFIED or REJECTED"
-                    
+                    response = gl.nondet.web.get(url)
+
+                    content = response.body.decode(
+                        "utf-8",
+                        errors="ignore"
+                    )
+
+                    content = content[:5000]
+
+                    prompt = f"""
+You are verifying a football event.
+
+Player:
+{asset_name}
+
+Event:
+{event_type}
+
+Claimed value:
+{claimed_value}
+
+Source URL:
+{url}
+
+Source content:
+{content}
+
+Determine whether this source clearly supports the claim.
+
+Rules:
+- The player must match.
+- The event must match.
+- The claimed value must be supported.
+- Do not guess.
+- If evidence is insufficient, reject.
+
+Return ONLY:
+VERIFIED
+or
+REJECTED
+"""
+
                     result = gl.nondet.exec_prompt(prompt)
+
                     if "VERIFIED" in result.upper():
-                        results.append("VERIFIED")
-                    else:
-                        results.append("REJECTED")
-                except:
-                    results.append("ERROR")
-            
-            if results.count("VERIFIED") >= 2:
+                        verified_count += 1
+
+                except Exception:
+                    pass
+
+            if verified_count >= 2:
                 return "VERIFIED"
+
             return "REJECTED"
-        
+
         final = gl.eq_principle.prompt_comparative(
-            check_sources,
-            principle="Both must agree on VERIFIED"
+            verify_sources,
+            principle="""
+The final decision must agree on whether the football event
+is supported by at least two independent sources.
+
+Accept only VERIFIED when the evidence clearly supports
+the player, event type, and claimed value.
+Otherwise return REJECTED.
+"""
         )
-        
+
         if "VERIFIED" in final.upper():
+
             if event_type == "GOAL":
                 self.goals += claimed_value
                 self.experience += claimed_value * 10
                 self.power += claimed_value * 2
+
+            elif event_type == "ASSIST":
+                self.assists += claimed_value
+                self.experience += claimed_value * 8
+                self.power += claimed_value
+
             self.verified_events += 1
-            return {"status": "VERIFIED", "power": self.power, "level": self.level}
-        
+
+            return {
+                "status": "VERIFIED",
+                "power": self.power,
+                "level": self.level,
+                "goals": self.goals,
+                "assists": self.assists
+            }
+
         self.rejected_events += 1
-        return {"status": "REJECTED"}
-    
+
+        return {
+            "status": "REJECTED",
+            "power": self.power,
+            "level": self.level
+        }
+
     @gl.public.view
     def get_status(self) -> str:
-        return f"{self.asset_name} | Power:{self.power} | Level:{self.level}"
+        return (
+            f"{self.asset_name} | "
+            f"Power:{self.power} | "
+            f"Level:{self.level}"
+        )
